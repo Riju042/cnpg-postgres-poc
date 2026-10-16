@@ -1,0 +1,86 @@
+# =============================================================================
+# CNPG Operator Installation
+# =============================================================================
+# This file provides Helm values for installing the CloudNativePG operator.
+#
+# Installation:
+#   helm repo add cnpg https://cloudnative-pg.github.io/charts
+#   helm repo update
+#   helm install cnpg-operator cnpg/cloudnative-pg \
+#     --namespace cnpg-system \
+#     --create-namespace \
+#     -f operator/install.yaml
+#
+# Verify:
+#   kubectl get deployment -n cnpg-system cnpg-controller-manager
+# =============================================================================
+
+# -- Number of operator replicas for HA
+replicaCount: 2
+
+image:
+  repository: ghcr.io/cloudnative-pg/cloudnative-pg
+  # -- Pin to a specific release for reproducibility
+  tag: "1.25.1"
+  pullPolicy: IfNotPresent
+
+# -- Operator resource requests and limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# -- Pod priority class for the operator
+priorityClassName: system-cluster-critical
+
+# -- Enable monitoring for the operator itself
+monitoring:
+  podMonitorEnabled: true
+  grafanaDashboard:
+    create: true
+
+# -- Webhook configuration
+webhook:
+  port: 9443
+  mutating:
+    create: true
+    failurePolicy: Fail
+  validating:
+    create: true
+    failurePolicy: Fail
+
+# -- Pod affinity rules to spread operator replicas across nodes
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - cloudnative-pg
+        topologyKey: kubernetes.io/hostname
+
+# -- Tolerations for operator pods
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    effect: NoSchedule
+
+# -- Service account configuration
+serviceAccount:
+  create: true
+  name: cnpg-controller-manager
+
+# -- Pod disruption budget
+podDisruptionBudget:
+  create: true
+  minAvailable: 1
+
+# -- Additional operator configuration
+config:
+  # -- Create default monitoring queries ConfigMap
+  INHERITED_ANNOTATIONS: "prometheus.io/*"
+  INHERITED_LABELS: "app, environment, team"

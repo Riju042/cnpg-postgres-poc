@@ -1,0 +1,85 @@
+# =============================================================================
+# CNPG Dev Cluster
+# =============================================================================
+# Lightweight single-instance PostgreSQL cluster for development/testing.
+# Minimal resources, smaller PVC, no S3 backups.
+#
+# Apply:
+#   kubectl apply -f clusters/dev-cluster.yaml
+#
+# Verify:
+#   kubectl get cluster dev-pg -n postgres-dev
+#   kubectl cnpg status dev-pg -n postgres-dev
+# =============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: dev-pg
+  namespace: postgres-dev
+  labels:
+    app: dev-pg
+    environment: dev
+    team: platform
+spec:
+  description: "Development PostgreSQL cluster managed by CNPG"
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4-12
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Configuration — tuned for dev workloads
+  # ---------------------------------------------------------------------------
+  postgresql:
+    parameters:
+      shared_buffers: "256MB"
+      effective_cache_size: "768MB"
+      work_mem: "16MB"
+      maintenance_work_mem: "64MB"
+      max_connections: "50"
+      wal_level: "replica"
+      log_min_duration_statement: "200"
+      log_statement: "all"
+      log_checkpoints: "on"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+
+  # ---------------------------------------------------------------------------
+  # Bootstrap
+  # ---------------------------------------------------------------------------
+  bootstrap:
+    initdb:
+      database: appdb
+      owner: appuser
+      encoding: UTF8
+      localeCType: C
+      localeCollate: C
+
+  # ---------------------------------------------------------------------------
+  # Storage — smaller PVC for dev
+  # ---------------------------------------------------------------------------
+  storage:
+    size: 10Gi
+    storageClass: gp3-enc
+
+  # ---------------------------------------------------------------------------
+  # Resources — lighter footprint
+  # ---------------------------------------------------------------------------
+  resources:
+    requests:
+      cpu: "250m"
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  # ---------------------------------------------------------------------------
+  # Monitoring
+  # ---------------------------------------------------------------------------
+  monitoring:
+    enablePodMonitor: true
+
+  # ---------------------------------------------------------------------------
+  # Superuser secret
+  # ---------------------------------------------------------------------------
+  superuserSecret:
+    name: dev-pg-superuser

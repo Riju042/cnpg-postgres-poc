@@ -1,0 +1,196 @@
+# =============================================================================
+# CNPG Production Cluster
+# =============================================================================
+# 3-instance HA PostgreSQL cluster (1 primary + 2 replicas)
+# with automated S3 backups, PVC storage on gp3, and monitoring.
+#
+# Apply:
+#   kubectl apply -f clusters/production-cluster.yaml
+#
+# Verify:
+#   kubectl get cluster production-pg -n postgres
+#   kubectl cnpg status production-pg -n postgres
+# =============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: production-pg
+  namespace: postgres
+  labels:
+    app: production-pg
+    environment: production
+    team: platform
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9187"
+spec:
+  description: "Production PostgreSQL cluster managed by CNPG"
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4-12
+  instances: 3
+  primaryUpdateStrategy: unsupervised
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Configuration
+  # ---------------------------------------------------------------------------
+  postgresql:
+    parameters:
+      # Memory
+      shared_buffers: "1GB"
+      effective_cache_size: "3GB"
+      work_mem: "64MB"
+      maintenance_work_mem: "256MB"
+
+      # WAL
+      wal_level: "replica"
+      max_wal_size: "2GB"
+      min_wal_size: "512MB"
+      wal_compression: "zstd"
+      wal_buffers: "64MB"
+
+      # Checkpoints
+      checkpoint_completion_target: "0.9"
+      checkpoint_timeout: "15min"
+
+      # Connections
+      max_connections: "200"
+
+      # Query Planner
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      default_statistics_target: "100"
+
+      # Logging
+      log_min_duration_statement: "500"
+      log_checkpoints: "on"
+      log_connections: "on"
+      log_disconnections: "on"
+      log_lock_waits: "on"
+      log_temp_files: "0"
+      log_statement: "ddl"
+
+      # Autovacuum
+      autovacuum_max_workers: "4"
+      autovacuum_naptime: "30s"
+      autovacuum_vacuum_threshold: "50"
+      autovacuum_analyze_threshold: "50"
+      autovacuum_vacuum_scale_factor: "0.05"
+      autovacuum_analyze_scale_factor: "0.02"
+
+    pg_hba:
+      - host all all 10.0.0.0/8 scram-sha-256
+      - host replication streaming_replica 10.0.0.0/8 scram-sha-256
+
+  # ---------------------------------------------------------------------------
+  # Bootstrap — initialize a fresh cluster
+  # ---------------------------------------------------------------------------
+  bootstrap:
+    initdb:
+      database: appdb
+      owner: appuser
+      encoding: UTF8
+      localeCType: C
+      localeCollate: C
+      dataChecksums: true
+
+  # ---------------------------------------------------------------------------
+  # Storage — EBS gp3 via PVC
+  # ---------------------------------------------------------------------------
+  storage:
+    size: 50Gi
+    storageClass: gp3-enc
+    pvcTemplate:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 50Gi
+      storageClassName: gp3-enc
+
+  walStorage:
+    size: 10Gi
+    storageClass: gp3-enc
+
+  # ---------------------------------------------------------------------------
+  # Resources
+  # ---------------------------------------------------------------------------
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+  # ---------------------------------------------------------------------------
+  # Backup to S3
+  # ---------------------------------------------------------------------------
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://my-cnpg-backups/production-pg/"
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-s3-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-s3-creds
+          key: SECRET_ACCESS_KEY
+        region:
+          name: cnpg-s3-creds
+          key: REGION
+      wal:
+        compression: gzip
+        maxParallel: 4
+      data:
+        compression: gzip
+        immediateCheckpoint: true
+        jobs: 2
+    retentionPolicy: "30d"
+
+  # ---------------------------------------------------------------------------
+  # Monitoring
+  # ---------------------------------------------------------------------------
+  monitoring:
+    enablePodMonitor: true
+    customQueriesConfigMap:
+      - name: cnpg-default-monitoring
+        key: queries
+
+  # ---------------------------------------------------------------------------
+  # Affinity — spread replicas across AZs
+  # ---------------------------------------------------------------------------
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: required
+
+  # ---------------------------------------------------------------------------
+  # Maintenance & Failover
+  # ---------------------------------------------------------------------------
+  nodeMaintenanceWindow:
+    inProgress: false
+    reusePVC: true
+
+  # Switchover delay (seconds) before forced switchover
+  switchoverDelay: 60
+  # Maximum time to wait for a primary to shut down gracefully
+  stopDelay: 300
+  # Start delay for readiness probe
+  startDelay: 120
+
+  # ---------------------------------------------------------------------------
+  # Superuser secret (create this secret before applying)
+  # ---------------------------------------------------------------------------
+  superuserSecret:
+    name: production-pg-superuser
+
+  # ---------------------------------------------------------------------------
+  # Managed roles
+  # ---------------------------------------------------------------------------
+  managed:
+    roles:
+      - name: readonly
+        ensure: present
+        login: true
+        comment: "Read-only access for reporting"
+        passwordSecret:
+          name: production-pg-readonly-password

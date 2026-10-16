@@ -1,0 +1,50 @@
+# =============================================================================
+# CNPG On-Demand Backup
+# =============================================================================
+# Trigger an immediate one-off backup of the production cluster.
+#
+# Usage:
+#   kubectl apply -f backups/backup-on-demand.yaml
+#
+# Monitor:
+#   kubectl get backup production-pg-on-demand -n postgres -w
+#
+# The backup name includes a timestamp suffix. To create multiple on-demand
+# backups, either change the name or use generateName (commented alternative).
+# =============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: production-pg-on-demand
+  namespace: postgres
+  labels:
+    app: production-pg
+    environment: production
+    backup-type: on-demand
+spec:
+  cluster:
+    name: production-pg
+  method: barmanObjectStore
+  online: true
+  onlineConfiguration:
+    immediateCheckpoint: true
+
+# ---
+# Alternative: use generateName for unique backup names each time
+# ---
+# apiVersion: postgresql.cnpg.io/v1
+# kind: Backup
+# metadata:
+#   generateName: production-pg-on-demand-
+#   namespace: postgres
+#   labels:
+#     app: production-pg
+#     environment: production
+#     backup-type: on-demand
+# spec:
+#   cluster:
+#     name: production-pg
+#   method: barmanObjectStore
+#   online: true
+#   onlineConfiguration:
+#     immediateCheckpoint: true

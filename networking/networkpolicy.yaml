@@ -1,0 +1,131 @@
+# =============================================================================
+# Network Policies for CNPG PostgreSQL Pods
+# =============================================================================
+# Restricts network access to PostgreSQL pods:
+#   - Ingress: Only from labeled application pods and the CNPG operator
+#   - Egress:  DNS, S3 (for backups), and inter-cluster replication
+#
+# Apply:
+#   kubectl apply -f networking/networkpolicy.yaml
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Policy: Allow PostgreSQL client connections only from labeled app pods
+# -----------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cnpg-allow-app-traffic
+  namespace: postgres
+  labels:
+    app: cnpg
+    policy: ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow application pods to connect to PostgreSQL (port 5432)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              cnpg-access: "true"
+          podSelector:
+            matchLabels:
+              cnpg-client: "true"
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow CNPG operator to manage instances
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+
+    # Allow Prometheus to scrape metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+
+    # Allow intra-cluster replication traffic
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/podRole: instance
+      ports:
+        - protocol: TCP
+          port: 5432
+
+---
+# -----------------------------------------------------------------------------
+# Policy: Restrict egress from PostgreSQL pods
+# -----------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cnpg-restrict-egress
+  namespace: postgres
+  labels:
+    app: cnpg
+    policy: egress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  policyTypes:
+    - Egress
+  egress:
+    # DNS resolution
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Intra-cluster replication
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/podRole: instance
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # S3 backups (HTTPS)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # Allow connections to the Kubernetes API server (for leader election)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 6443

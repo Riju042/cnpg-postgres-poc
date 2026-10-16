@@ -1,0 +1,64 @@
+# =============================================================================
+# CNPG Scheduled Backup
+# =============================================================================
+# Daily automated backup of the production cluster to S3.
+# Runs at 02:00 UTC every day, retains backups per cluster retention policy.
+#
+# Apply:
+#   kubectl apply -f backups/scheduled-backup.yaml
+#
+# Verify:
+#   kubectl get scheduledbackups -n postgres
+#   kubectl get backups -n postgres
+# =============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: production-pg-daily-backup
+  namespace: postgres
+  labels:
+    app: production-pg
+    environment: production
+    backup-type: scheduled
+spec:
+  # Cron schedule: daily at 02:00 UTC
+  schedule: "0 2 * * *"
+  # Suspend the schedule (set to true to pause)
+  suspend: false
+  # Whether to run a backup immediately when the schedule is created
+  immediate: false
+  # Backup ownership reference
+  backupOwnerReference: self
+  # Target cluster
+  cluster:
+    name: production-pg
+  # Use the barman object store target configured in the cluster
+  method: barmanObjectStore
+  # Online backup (non-blocking)
+  online: true
+  onlineConfiguration:
+    immediateCheckpoint: true
+---
+# =============================================================================
+# Weekly Full Backup (Sunday 01:00 UTC)
+# =============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: production-pg-weekly-full
+  namespace: postgres
+  labels:
+    app: production-pg
+    environment: production
+    backup-type: weekly-full
+spec:
+  schedule: "0 1 * * 0"
+  suspend: false
+  immediate: false
+  backupOwnerReference: self
+  cluster:
+    name: production-pg
+  method: barmanObjectStore
+  online: true
+  onlineConfiguration:
+    immediateCheckpoint: true
